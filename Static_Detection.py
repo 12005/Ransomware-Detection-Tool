@@ -3,10 +3,12 @@ import pefile
 import re
 import math
 import requests
+import yara
 
 # VirusTotal API key (replace with your actual key)
-API_KEY = '23f3e5b60239c1afdda7a467a8cc357b4f8112d19408ab7a8823408c6b44ba1b'
+API_KEY = ''
 
+# Function to compute file hash
 def compute_hash(file_path, algorithm='sha256'):
     hash_func = hashlib.new(algorithm)
     with open(file_path, 'rb') as file:
@@ -14,8 +16,8 @@ def compute_hash(file_path, algorithm='sha256'):
             hash_func.update(chunk)
     return hash_func.hexdigest()
 
+# Function to check file format (PE)
 def check_file_format(file_path):
-    # Check if file is a PE (Portable Executable) format by looking at the first two bytes (DOS header magic)
     with open(file_path, 'rb') as file:
         magic_number = file.read(2)
     return magic_number == b'MZ'
@@ -42,13 +44,12 @@ def check_hash_virustotal(file_hash):
         print(f"Error querying VirusTotal: {response.status_code}")
     return False
 
+# PE Header Analysis
 def pe_header_analysis(file_path):
-    # Only analyze PE files
     if check_file_format(file_path):
         print("Analyzing PE headers...")
         try:
             pe = pefile.PE(file_path)
-            # Perform PE analysis (same as before)
             return []  # Example, replace with actual function results
         except Exception as e:
             print(f"Error inspecting PE headers: {e}")
@@ -56,12 +57,12 @@ def pe_header_analysis(file_path):
         print("File is not a valid PE file. Skipping PE header analysis.")
     return []
 
+# Inspect PE Headers
 def inspect_pe_headers(file_path):
     suspicious_functions = []
-    if check_file_format(file_path):  # Only analyze PE files
+    if check_file_format(file_path):
         try:
             pe = pefile.PE(file_path)
-            # Check imported functions for suspicious ones
             suspicious_imports = ["VirtualAlloc", "CreateFileA", "WriteFile", "CryptEncrypt", "CryptDecrypt", "RegCreateKeyA"]
             for entry in pe.DIRECTORY_ENTRY_IMPORT:
                 for imp in entry.imports:
@@ -71,7 +72,7 @@ def inspect_pe_headers(file_path):
             print(f"Error inspecting PE headers: {e}")
     return suspicious_functions
 
-# Module 3: String Extraction
+# String Extraction
 def extract_strings(file_path, min_length=4):
     try:
         with open(file_path, 'rb') as file:
@@ -91,7 +92,7 @@ def extract_strings(file_path, min_length=4):
         print(f"Error extracting strings: {e}")
         return []
 
-# Module 4: Entropy Calculation
+# Entropy Calculation
 def calculate_entropy(data):
     if not data:
         return 0
@@ -118,8 +119,83 @@ def file_entropy(file_path):
     except Exception as e:
         print(f"Error calculating entropy: {e}")
         return 0
-    
-# Final ransomware detection script with improved decision-making
+
+# YARA Rule Matching (Ransomware Family Detection)
+def yara_scan(file_path):
+    try:
+        # Define YARA rules
+        yara_rules = """
+        rule Ransomware_Family_Detection {
+            meta:
+                description = "Detects multiple ransomware families: WannaCry, Locky, CryptoLocker, REvil, Ryuk"
+                author = "YARA rule example"
+                date = "2024-10-20"
+                version = "1.0"
+                
+            strings:
+                // WannaCry
+                $wannacry_1 = "WannaDecryptor" wide
+                $wannacry_2 = "WannaCry" wide
+                $wannacry_3 = "WNcry@2ol7" wide
+
+                // Locky
+                $locky_ext = ".locky" nocase
+                $locky_str = "the installation of software must be authorized by the administrator"
+
+                // CryptoLocker
+                $cryptolocker_note = "Your personal files are encrypted!"
+                $cryptolocker_name = "CryptoLocker" nocase
+                $cryptolocker_rsa = "BEGIN PUBLIC KEY" ascii
+
+                // REvil/Sodinokibi
+                $revil_ext = ".sodinokibi" nocase
+                $revil_msg = "REvil"
+                $revil_key = "-----BEGIN REvil PRIVATE KEY-----" ascii
+
+                // Ryuk
+                $ryuk_note = "RyukReadMe" wide
+                $ryuk_str1 = "Ryuk" wide
+                $ryuk_key = "-----BEGIN PRIVATE KEY-----"
+
+                // Common PE header
+                $mz_header = { 4D 5A } // MZ header for PE files
+
+            condition:
+                (uint16(0) == 0x5A4D) and // PE file
+                filesize < 10MB and (
+                    // WannaCry conditions
+                    (all of ($wannacry_*) or
+                    // Locky conditions
+                    ($locky_ext or $locky_str) or
+                    // CryptoLocker conditions
+                    ($cryptolocker_note or $cryptolocker_name or $cryptolocker_rsa) or
+                    // REvil conditions
+                    ($revil_ext or $revil_msg or $revil_key) or
+                    // Ryuk conditions
+                    ($ryuk_note or $ryuk_str1 or $ryuk_key)) or
+                    // Common PE header
+                    ($mz_header)
+                )
+        }
+
+        """
+        
+        # Compile YARA rules from string
+        rules = yara.compile(source=yara_rules)
+        
+        # Scan the file for matches
+        matches = rules.match(file_path)
+        
+        if matches:
+            print(f"YARA detected ransomware families with rules: {matches}")
+            return True  # YARA found ransomware indicators
+        else:
+            print("No YARA rule matches found.")
+    except yara.Error as e:
+        print(f"Error in YARA scanning: {e}")
+    return False
+
+# Final ransomware detection script with YARA integration
 def ransomware_static_analysis(file_path):
     print("Starting static analysis...")
 
@@ -137,11 +213,11 @@ def ransomware_static_analysis(file_path):
     is_ransomware_vt = check_hash_virustotal(hash_value)
     if is_ransomware_vt:
         print("The file is likely ransomware according to VirusTotal.")
-        score += 1  # Increase score if VirusTotal flags it
+        score += 100
 
     # Step 2: PE Header Analysis
     print("\n[2] PE Header Analysis")
-    suspicious_functions = []  # Initialize to empty list
+    suspicious_functions = []
     if check_file_format(file_path):
         pe_header_analysis(file_path)
         suspicious_functions = inspect_pe_headers(file_path)
@@ -149,44 +225,49 @@ def ransomware_static_analysis(file_path):
             print("Suspicious API calls found in imports:")
             for func in suspicious_functions:
                 print(f" - {func}")
-            score += 1  # Increase score if suspicious API calls are found
+            score += 1
         else:
             print("No suspicious API calls detected.")
     else:
         print("PE analysis skipped: File is not a PE.")
-    
+
     # Step 3: String Extraction
     print("\n[3] String Extraction")
     suspicious_strings = extract_strings(file_path)
     if suspicious_strings:
         print("Suspicious strings found:")
-        for string in suspicious_strings[:10]:  # Display first 10 strings for brevity
+        for string in suspicious_strings[:10]:
             print(f" - {string}")
-        score += 1  # Increase score if suspicious strings are found
+        score += 1
     else:
         print("No suspicious strings found.")
     
-    # Step 4: Entropy Calculation
+    # Step 4: File Entropy Calculation
     print("\n[4] Entropy Calculation")
-    entropy_value = file_entropy(file_path)
-    print(f"File entropy: {entropy_value:.4f}")
-    
-    if entropy_value > entropy_threshold:
-        print("High entropy detected (Possible encryption or packing).")
-        score += 1  # Increase score if entropy is above the threshold
-
-    # Step 5: Ransomware Likelihood Assessment
-    print("\n[5] Ransomware Likelihood Assessment")
-
-    if score >= suspicious_threshold:
-        print(f"\nResult: This file is likely ransomware (score: {score}).")
+    entropy = file_entropy(file_path)
+    print(f"File entropy: {entropy}")
+    if entropy > entropy_threshold:
+        print(f"High entropy detected! (> {entropy_threshold})")
+        score += 1
     else:
-        print(f"\nResult: This file is not ransomware (score: {score}).")
+        print(f"Entropy is below the threshold of {entropy_threshold}.")
+    
+    # Step 5: YARA Rule Scanning (Ransomware Family Detection)
+    print("\n[5] YARA Rule Scanning (Ransomware Family Detection)")
+    yara_result = yara_scan(file_path)
+    if yara_result:
+        print("YARA detected ransomware behavior.")
+        score += 100
+    else:
+        print("No ransomware patterns detected by YARA.")
 
-# Test the full pipeline
-file_path = "Submission of project title (Responses).pdf"
-ransomware_static_analysis(file_path)
+    # Final Score Evaluation
+    print("\nFinal Score Evaluation:")
+    if score >= suspicious_threshold:
+        print(f"The file is likely ransomware based on static analysis. [Score: {score}]")
+    else:
+        print(f"The file is unlikely to be ransomware. [Score: {score}]")
 
-# Test the full pipeline
-file_path = "Submission of project title (Responses).pdf"
-ransomware_static_analysis(file_path)
+# Example Usage:
+file_to_analyze = "Submission of project title (Responses).pdf"
+ransomware_static_analysis(file_to_analyze)
